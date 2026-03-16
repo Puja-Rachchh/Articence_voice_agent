@@ -8,6 +8,8 @@ Production-style customer support assistant for electronics orders with:
 - Hybrid intent routing (semantic + regex patterns + guardrails)
 - Voice support in browser and optional server-side transcription/TTS
 - Latency display per response in conversation UI
+<img width="1274" height="587" alt="image" src="https://github.com/user-attachments/assets/8337cf16-6d6e-47db-8698-4c453fd56779" />
+<img width="1150" height="625" alt="image" src="https://github.com/user-attachments/assets/75757f25-07b2-45c3-8016-4513c84ec06f" />
 
 ## 1. Overview
 
@@ -39,7 +41,22 @@ The assistant supports text input and voice interaction. Responses are shown in 
 - Frontend Voice: Web Speech API + `speechSynthesis`
 - TTS (optional server-side): `pyttsx3`
 
-## 4. Project Structure
+## 4. User Flow
+
+1. Open app and establish session (`/api/session`).
+2. Verify using phone + email (`/api/verify`).
+3. Ask text query (`/api/text-query`) or voice query.
+4. Assistant returns:
+   - response text
+   - detected intent
+   - confidence
+   - latency in milliseconds
+5. UI shows conversation entries and `Agent • <latency> ms` label.
+<img width="477" height="483" alt="image" src="https://github.com/user-attachments/assets/b4b3dd7e-b017-44b0-930d-962473c8e9af" />
+<img width="480" height="524" alt="image" src="https://github.com/user-attachments/assets/c80b6aa7-4b24-4920-884b-72533e1e9211" />
+
+
+## 5. Project Structure
 
 - `main.py`: FastAPI app, lifecycle, endpoints, session map, latency reporting
 - `query_processor.py`: intent detection, guardrails, intent handlers, response generation
@@ -55,14 +72,14 @@ The assistant supports text input and voice interaction. Responses are shown in 
 - `requirements.txt`: Python dependencies
 - `entrypoint.py`: compatibility runner
 
-## 5. Prerequisites
+## 6. Prerequisites
 
 - Python 3.10+
 - Access to a Snowflake account with required tables/data
 - Windows PowerShell (or equivalent shell)
 - For server audio transcription path (`/api/voice-query`): `ffmpeg` in `PATH`
 
-## 6. Setup
+## 7. Setup
 
 1. Clone and enter project.
 
@@ -95,7 +112,7 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-## 7. Configuration
+## 8. Configuration
 
 Set the following values in `.env`:
 
@@ -127,7 +144,7 @@ Notes:
 - Keep `ENABLE_SERVER_TTS=false` when browser TTS is active to avoid double audio.
 - If semantic dependencies are unavailable, app falls back to regex intent routing.
 
-## 8. Running the App
+## 9. Running the App
 
 ```powershell
 python main.py
@@ -137,17 +154,6 @@ Open:
 
 `http://127.0.0.1:8000`
 
-## 9. User Flow
-
-1. Open app and establish session (`/api/session`).
-2. Verify using phone + email (`/api/verify`).
-3. Ask text query (`/api/text-query`) or voice query.
-4. Assistant returns:
-   - response text
-   - detected intent
-   - confidence
-   - latency in milliseconds
-5. UI shows conversation entries and `Agent • <latency> ms` label.
 
 ## 10. API Endpoints
 
@@ -173,30 +179,12 @@ Sample `POST /api/text-query` response:
 }
 ```
 
-## 11. Architecture
 
-```text
-Browser UI (index.html + app.js)
-  -> FastAPI (main.py)
-      -> QueryProcessor (intent + rules)
-          -> SemanticIntentRouter (optional)
-          -> Business Rules
-          -> SnowflakeClient (database.py)
-      -> Optional STT/TTS services
-  <- JSON response (intent, confidence, latency)
-```
-
-Core runtime components:
-
-- In-memory conversation sessions keyed by `session_id`
-- Verification gate for account-specific intents
-- Deterministic business rule enforcement
-
-## 12. Intent Routing Design
+## 11. Intent Routing Design
 
 Routing uses layered decisioning:
 
-1. Semantic intent detection (optional, threshold-controlled).
+1. Semantic intent detection ( threshold-controlled).
 2. Regex pattern scoring fallback.
 3. Guardrails:
    - block personal order lookup without personal order hints
@@ -205,7 +193,7 @@ Routing uses layered decisioning:
 
 This prevents wrong answers for general questions like sports/news queries.
 
-## 13. Business Rules
+## 12. Business Rules
 
 - Return window: 30 days from order date
 - Warranty coverage: 12 months from order date
@@ -215,7 +203,7 @@ This prevents wrong answers for general questions like sports/news queries.
   - iPad: minimum AppleCare charge $49
   - MacBook: minimum AppleCare charge $99
 
-## 14. Troubleshooting
+## 13. Troubleshooting
 
 1. App starts but old UI behavior persists:
    - Hard refresh browser (`Ctrl+F5`) to reload static JS/CSS.
@@ -229,16 +217,5 @@ This prevents wrong answers for general questions like sports/news queries.
    - Verify `sentence-transformers` and `faiss-cpu` are installed.
    - Set `USE_SEMANTIC_INTENT_ROUTER=false` to run regex-only mode.
 
-FFmpeg install (Windows):
 
-```powershell
-winget install --id Gyan.FFmpeg -e
-ffmpeg -version
-```
 
-## 15. Security Notes
-
-- Do not commit `.env` with real credentials.
-- Rotate credentials immediately if they were ever shared or pushed.
-- Use least-privilege Snowflake role permissions.
-- Consider replacing in-memory sessions with persistent/session-store for production.
