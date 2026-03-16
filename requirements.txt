@@ -1,0 +1,11 @@
+snowflake-connector-python
+openai-whisper
+sounddevice
+pyttsx3
+pandas
+fastapi
+uvicorn
+jinja2
+python-multipart
+sentence-transformers
+faiss-cpu

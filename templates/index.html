@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ app_name }}</title>
+    <link rel="stylesheet" href="/static/styles.css?v=3">
+</head>
+<body>
+    <main class="shell">
+        <section class="hero">
+            <p class="eyebrow">Voice Support</p>
+            <h1>{{ app_name }}</h1>
+            <p class="lead">
+                Ask about returns, warranty, AppleCare, or order history. Share your phone number and email in your message so the system can verify your account.
+            </p>
+        </section>
+
+        <section class="panel controls">
+            <div class="status-row">
+                <span id="statusBadge" class="badge">Disconnected</span>
+                <span id="verificationBadge" class="badge muted">Not verified</span>
+            </div>
+
+            <form id="verifyForm" class="text-form">
+                <label for="phoneInput">Phone Number</label>
+                <input id="phoneInput" name="phone" type="tel" inputmode="numeric" placeholder="1234567890 or 24-678-784-9652" maxlength="20" />
+                <label for="emailInput">Email ID</label>
+                <input id="emailInput" name="email" type="email" placeholder="name@example.com" />
+                <button id="verifyButton" type="submit" class="primary">Verify Customer</button>
+            </form>
+
+            <form id="textForm" class="text-form">
+                <label for="queryInput">Query</label>
+                <textarea id="queryInput" name="query" rows="4" placeholder="Can I return my iPhone?" disabled></textarea>
+                <button id="queryButton" type="submit" class="primary" disabled>Send Query</button>
+            </form>
+
+            <div class="voice-controls">
+                <button id="recordButton" class="primary" type="button" disabled>Start voice</button>
+                <p id="liveTranscript" class="live-transcript"></p>
+            </div>
+        </section>
+
+        <section class="panel transcript-panel">
+            <h2>Conversation</h2>
+            <div id="conversation" class="conversation"></div>
+        </section>
+    </main>
+
+    <script src="/static/app.js?v=5"></script>
+</body>
+</html>
