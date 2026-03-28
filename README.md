@@ -4,6 +4,7 @@ Production-style customer support assistant for electronics orders with:
 
 - FastAPI backend + HTML/CSS/JS chat UI
 - Snowflake-backed customer and order lookup
+- Universal Snowflake data connector for SF1/SF10/SF100/SF1000 views/materialized views
 - Verify-first workflow (phone + email)
 - Hybrid intent routing (semantic + regex patterns + guardrails)
 - Voice support in browser and optional server-side transcription/TTS
@@ -19,6 +20,13 @@ The assistant supports text input and voice interaction. Responses are shown in 
 
 - Verify-first support flow before account-specific queries.
 - Snowflake integration for customer verification and order history.
+- Dynamic schema detection and column mapping to a standardized order schema (`order_id`, `customer_id`, `device`, `order_date`, `apple_care`, `order_value`).
+- Unified retrieval: selected SF source is unioned with the primary `orders` table so latest rows are included.
+- Source-specific performance strategies:
+   - `SF1`: near-fresh behavior with very short session cache.
+   - `SF10`: customer-clustered shared cache for repeated customer lookups.
+   - `SF100` / `SF1000`: async prefetch on verification plus longer cache windows.
+- Source-aware query execution (`SF1`, `SF10`, `SF100`, `SF1000`) selected in UI and persisted in session.
 - Intent detection with confidence score.
 - Hybrid intent strategy:
   - semantic retrieval (`sentence-transformers` + `faiss-cpu`)
@@ -107,6 +115,12 @@ SNOWFLAKE_WAREHOUSE=
 SNOWFLAKE_ROLE=
 SNOWFLAKE_DATABASE=ARTICENCE_ORDERS
 SNOWFLAKE_SCHEMA=CUSTOMER_DATA
+DEFAULT_DATA_SOURCE=sf1
+SNOWFLAKE_ORDERS_SF1_OBJECT=orders_sf1_view
+SNOWFLAKE_ORDERS_SF10_OBJECT=orders_sf10_view
+SNOWFLAKE_ORDERS_SF100_OBJECT=orders_sf100_mv
+SNOWFLAKE_ORDERS_SF1000_OBJECT=orders_sf1000_mv
+SNOWFLAKE_PRIMARY_ORDERS_OBJECT=orders
 
 WHISPER_MODEL=base.en
 STT_SAMPLE_RATE=16000
@@ -120,12 +134,16 @@ ENABLE_SERVER_TTS=false
 USE_SEMANTIC_INTENT_ROUTER=true
 SEMANTIC_MODEL_NAME=all-MiniLM-L6-v2
 SEMANTIC_INTENT_THRESHOLD=0.55
+ORDER_CACHE_TTL_SECONDS=45
 ```
 
 Notes:
 
 - Keep `ENABLE_SERVER_TTS=false` when browser TTS is active to avoid double audio.
 - If semantic dependencies are unavailable, app falls back to regex intent routing.
+- `DEFAULT_DATA_SOURCE` controls initial connector source before verification.
+- `ORDER_CACHE_TTL_SECONDS` controls session order-cache lifetime for lower latency.
+- `SNOWFLAKE_PRIMARY_ORDERS_OBJECT` is the canonical table unioned with SF datasets to avoid stale-answer issues.
 
 ## 8. Running the App
 
@@ -140,7 +158,7 @@ Open:
 ## 9. User Flow
 
 1. Open app and establish session (`/api/session`).
-2. Verify using phone + email (`/api/verify`).
+2. Select source (`SF1`, `SF10`, `SF100`, `SF1000`) and verify with phone + email (`/api/verify`).
 3. Ask text query (`/api/text-query`) or voice query.
 4. Assistant returns:
    - response text
@@ -154,7 +172,7 @@ Open:
 - `GET /`: UI page
 - `GET /api/health`: health check
 - `POST /api/session`: create/retrieve frontend session context
-- `POST /api/verify`: verify customer (`phone`, `email`, optional `session_id`)
+- `POST /api/verify`: verify customer (`phone`, `email`, `data_source`, optional `session_id`)
 - `POST /api/text-query`: process text query (`query`, optional `session_id`)
 - `POST /api/voice-query`: process uploaded audio (`audio`, optional `session_id`)
 

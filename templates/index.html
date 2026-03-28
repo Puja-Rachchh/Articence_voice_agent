@@ -23,6 +23,13 @@
             </div>
 
             <form id="verifyForm" class="text-form">
+                <label for="sourceSelect">Data Source</label>
+                <select id="sourceSelect" name="data_source">
+                    <option value="sf1">SF1</option>
+                    <option value="sf10">SF10</option>
+                    <option value="sf100">SF100</option>
+                    <option value="sf1000">SF1000</option>
+                </select>
                 <label for="phoneInput">Phone Number</label>
                 <input id="phoneInput" name="phone" type="tel" inputmode="numeric" placeholder="1234567890 or 24-678-784-9652" maxlength="20" />
                 <label for="emailInput">Email ID</label>
@@ -48,6 +55,6 @@
         </section>
     </main>
 
-    <script src="/static/app.js?v=5"></script>
+    <script src="/static/app.js?v=7"></script>
 </body>
 </html>

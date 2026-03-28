@@ -99,12 +99,14 @@ async def healthcheck() -> dict[str, str]:
 
 
 @app.post("/api/session")
-async def create_session() -> dict[str, str | bool]:
+async def create_session(request: Request) -> dict[str, str | bool | list[str]]:
     session_id, session = get_or_create_session(None)
     return {
         "session_id": session_id,
         "verified": session.verified,
         "customer_name": session.customer_name or "",
+        "data_source": session.data_source,
+        "available_sources": request.app.state.db.list_data_sources(),
     }
 
 
@@ -113,10 +115,17 @@ async def verify_customer_identity(
     request: Request,
     phone: str = Form(...),
     email: str = Form(...),
+    data_source: str = Form(default="sf1"),
     session_id: str | None = Form(default=None),
-) -> dict[str, str | bool]:
+) -> dict[str, str | bool | list[str]]:
     session_id, session = get_or_create_session(session_id)
-    verified, message, session = request.app.state.processor.verify_identity(phone, email, session)
+    try:
+        verified, message, session = request.app.state.processor.verify_identity(phone, email, session, data_source=data_source)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     conversation_sessions[session_id] = session
 
     return {
@@ -124,6 +133,8 @@ async def verify_customer_identity(
         "verified": verified,
         "response": message,
         "customer_name": session.customer_name or "",
+        "data_source": session.data_source,
+        "available_sources": request.app.state.db.list_data_sources(),
     }
 
 
@@ -154,6 +165,7 @@ async def process_text_query(
         "latency_ms": latency_ms,
         "verified": session.verified,
         "customer_name": session.customer_name or "",
+        "data_source": session.data_source,
     }
 
 
@@ -192,6 +204,7 @@ async def process_voice_query(
             "latency_ms": latency_ms,
             "verified": session.verified,
             "customer_name": session.customer_name or "",
+            "data_source": session.data_source,
         }
 
     intent_result, session = request.app.state.processor.process_query_with_intent(transcript, session)
@@ -210,6 +223,7 @@ async def process_voice_query(
         "latency_ms": latency_ms,
         "verified": session.verified,
         "customer_name": session.customer_name or "",
+        "data_source": session.data_source,
     }
 
 

@@ -1,5 +1,7 @@
 import re
 import os
+import threading
+import time
 from dataclasses import dataclass
 from datetime import date
 from typing import Callable, Optional
@@ -158,7 +160,30 @@ class ConversationSession:
     email: Optional[str] = None
     customer_id: Optional[int] = None
     customer_name: Optional[str] = None
+    data_source: str = "sf1"
     verified: bool = False
+    cached_orders: Optional[list[dict]] = None
+    cache_source: Optional[str] = None
+    cache_timestamp: float = 0.0
+    prefetch_in_progress: bool = False
+
+
+@dataclass(frozen=True)
+class SourceStrategy:
+    session_cache_ttl_seconds: float
+    customer_cluster_cache_ttl_seconds: float = 0.0
+    async_prefetch_on_verify: bool = False
+
+
+SOURCE_STRATEGIES: dict[str, SourceStrategy] = {
+    # Small source: minimal session cache to keep results fresh.
+    "sf1": SourceStrategy(session_cache_ttl_seconds=60.0),
+    # Medium source: cluster cache by customer_id for reuse across sessions.
+    "sf10": SourceStrategy(session_cache_ttl_seconds=300.0, customer_cluster_cache_ttl_seconds=60.0),
+    # Large sources: longer cache + async prefetch to hide first-query latency.
+    "sf100": SourceStrategy(session_cache_ttl_seconds=1000.0, async_prefetch_on_verify=True),
+    "sf1000": SourceStrategy(session_cache_ttl_seconds=1000.0, async_prefetch_on_verify=True),
+}
 
 
 @dataclass
@@ -216,19 +241,31 @@ class QueryProcessor:
             "unknown": self._handle_unknown,
         }
         self._verification_required_intents = {"return", "warranty", "applecare", "replacement", "order_lookup", "price", "date"}
+        self._order_cache_ttl_seconds = float(os.getenv("ORDER_CACHE_TTL_SECONDS", "45"))
+
+    def _get_source_strategy(self, source_key: str) -> SourceStrategy:
+        return SOURCE_STRATEGIES.get(source_key, SourceStrategy(session_cache_ttl_seconds=self._order_cache_ttl_seconds))
 
     def verify_identity(
         self,
         phone: str,
         email: str,
         session: ConversationSession,
+        data_source: str | None = None,
     ) -> tuple[bool, str, ConversationSession]:
+        if data_source:
+            session.data_source = data_source.strip().lower()
+
         normalized_phone = "".join(ch for ch in str(phone or "") if ch.isdigit())
         session.phone = normalized_phone
         session.email = (email or "").strip().lower()
         session.verified = False
         session.customer_id = None
         session.customer_name = None
+        session.cached_orders = None
+        session.cache_source = None
+        session.cache_timestamp = 0.0
+        session.prefetch_in_progress = False
 
         if not session.phone or not session.email:
             return False, "Please provide both phone number and email.", session
@@ -236,14 +273,19 @@ class QueryProcessor:
         if len(session.phone) < 10:
             return False, "Please provide a valid phone number with at least 10 digits.", session
 
-        customer = self.db.verify_customer(session.phone, session.email)
+        customer = self.db.verify_customer(session.phone, session.email, source=session.data_source)
         if not customer:
             return False, "I could not verify your account using that phone number and email.", session
 
         session.customer_id = int(customer["customer_id"])
         session.customer_name = customer.get("customer_name")
         session.verified = True
-        return True, f"Verified successfully for {session.customer_name}.", session
+
+        strategy = self._get_source_strategy(session.data_source)
+        if strategy.async_prefetch_on_verify and session.customer_id is not None:
+            self._start_async_prefetch(session)
+
+        return True, f"Verified successfully for {session.customer_name} using source {session.data_source.upper()}.", session
 
     def process_query_with_intent(self, query: str, session: ConversationSession) -> tuple[IntentResult, ConversationSession]:
         normalized = query.strip().lower()
@@ -521,7 +563,7 @@ class QueryProcessor:
         return IntentResult(intent="replacement", response=response, confidence=confidence)
 
     def _handle_order_lookup(self, session: ConversationSession, context: IntentContext, confidence: float) -> IntentResult:
-        orders = self.db.fetch_orders(session.customer_id)
+        orders = self._get_orders_for_session(session)
         if not orders:
             return IntentResult(intent="order_lookup", response="I could not find any orders for your account.", confidence=confidence)
 
@@ -599,7 +641,7 @@ class QueryProcessor:
         if session.verified:
             return True, ""
 
-        customer = self.db.verify_customer(session.phone, session.email)
+        customer = self.db.verify_customer(session.phone, session.email, source=session.data_source)
         if not customer:
             session.verified = False
             session.customer_id = None
@@ -667,10 +709,74 @@ class QueryProcessor:
         return " ".join(parts)
 
     def _get_target_order_for_customer(self, session: ConversationSession, context: IntentContext) -> Optional[dict]:
-        orders = self.db.fetch_orders(session.customer_id)
+        orders = self._get_orders_for_session(session)
         if not orders:
             return None
         return self._pick_target_order(orders, context.device)
+
+    def _get_orders_for_session(self, session: ConversationSession) -> list[dict]:
+        now = time.monotonic()
+        strategy = self._get_source_strategy(session.data_source)
+
+        # Strategy: local session cache (ttl varies by source).
+        if (
+            session.cached_orders is not None
+            and session.cache_source == session.data_source
+            and (now - session.cache_timestamp) <= strategy.session_cache_ttl_seconds
+        ):
+            return session.cached_orders
+
+        if session.customer_id is None:
+            return []
+
+        # Strategy (sf10): customer-cluster cache shared across sessions.
+        if strategy.customer_cluster_cache_ttl_seconds > 0:
+            clustered = self.db.get_customer_cluster_cache(
+                source=session.data_source,
+                customer_id=session.customer_id,
+                ttl_seconds=strategy.customer_cluster_cache_ttl_seconds,
+            )
+            if clustered is not None:
+                session.cached_orders = clustered
+                session.cache_source = session.data_source
+                session.cache_timestamp = now
+                return clustered
+
+        orders = self.db.fetch_orders(session.customer_id, source=session.data_source)
+        session.cached_orders = orders
+        session.cache_source = session.data_source
+        session.cache_timestamp = now
+
+        if strategy.customer_cluster_cache_ttl_seconds > 0:
+            self.db.set_customer_cluster_cache(session.data_source, session.customer_id, orders)
+
+        return orders
+
+    def _start_async_prefetch(self, session: ConversationSession) -> None:
+        if session.prefetch_in_progress or session.customer_id is None:
+            return
+
+        session.prefetch_in_progress = True
+        source = session.data_source
+        customer_id = session.customer_id
+
+        def _prefetch() -> None:
+            try:
+                rows = self.db.fetch_orders(customer_id, source=source)
+                session.cached_orders = rows
+                session.cache_source = source
+                session.cache_timestamp = time.monotonic()
+
+                strategy = self._get_source_strategy(source)
+                if strategy.customer_cluster_cache_ttl_seconds > 0:
+                    self.db.set_customer_cluster_cache(source, customer_id, rows)
+            except Exception:
+                # Prefetch is best-effort and should not break verification flow.
+                pass
+            finally:
+                session.prefetch_in_progress = False
+
+        threading.Thread(target=_prefetch, daemon=True).start()
 
     def _pick_target_order(self, orders: list[dict], canonical_device: Optional[str]) -> dict:
         if canonical_device:

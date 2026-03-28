@@ -3,6 +3,7 @@ const verifyForm = document.getElementById("verifyForm");
 const textForm = document.getElementById("textForm");
 const phoneInput = document.getElementById("phoneInput");
 const emailInput = document.getElementById("emailInput");
+const sourceSelect = document.getElementById("sourceSelect");
 const queryInput = document.getElementById("queryInput");
 const queryButton = document.getElementById("queryButton");
 const recordButton = document.getElementById("recordButton");
@@ -54,6 +55,13 @@ function formatLatency(latencyMs) {
     return `${Math.max(0, Math.round(latencyMs))} ms`;
 }
 
+function formatSource(sourceName) {
+    if (!sourceName) {
+        return "";
+    }
+    return String(sourceName).toUpperCase();
+}
+
 function addMessage(role, text, options = {}) {
     if (!text) {
         return;
@@ -65,8 +73,18 @@ function addMessage(role, text, options = {}) {
     const title = document.createElement("h3");
     title.className = "message-title";
     const roleLabel = role === "user" ? "Customer" : "Agent";
-    const latencyLabel = role === "agent" ? formatLatency(options.latencyMs) : "";
-    title.textContent = latencyLabel ? `${roleLabel} • ${latencyLabel}` : roleLabel;
+    const titleParts = [roleLabel];
+    if (role === "agent") {
+        const sourceLabel = formatSource(options.dataSource);
+        const latencyLabel = formatLatency(options.latencyMs);
+        if (sourceLabel) {
+            titleParts.push(sourceLabel);
+        }
+        if (latencyLabel) {
+            titleParts.push(latencyLabel);
+        }
+    }
+    title.textContent = titleParts.join(" • ");
 
     const body = document.createElement("p");
     body.className = "message-body";
@@ -101,6 +119,18 @@ async function ensureSession() {
     });
     const payload = await response.json();
     sessionId = payload.session_id;
+    if (Array.isArray(payload.available_sources) && sourceSelect) {
+        sourceSelect.innerHTML = "";
+        payload.available_sources.forEach((source) => {
+            const option = document.createElement("option");
+            option.value = source;
+            option.textContent = source.toUpperCase();
+            sourceSelect.appendChild(option);
+        });
+    }
+    if (sourceSelect && payload.data_source) {
+        sourceSelect.value = payload.data_source;
+    }
     statusBadge.textContent = "Connected";
     updateVerificationBadge(payload.verified, payload.customer_name || "");
     setQueryControlsEnabled(Boolean(payload.verified));
@@ -121,14 +151,25 @@ async function verifyCustomer() {
     formData.append("session_id", activeSessionId);
     formData.append("phone", phone);
     formData.append("email", email);
+    formData.append("data_source", sourceSelect ? sourceSelect.value : "sf1");
 
     const response = await fetch("/api/verify", {
         method: "POST",
         body: formData,
     });
+
+    if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({}));
+        addMessage("agent", errorPayload.detail || "Verification failed. Please check your details and selected source.");
+        return;
+    }
+
     const payload = await response.json();
 
     updateVerificationBadge(payload.verified, payload.customer_name);
+    if (sourceSelect && payload.data_source) {
+        sourceSelect.value = payload.data_source;
+    }
     setQueryControlsEnabled(Boolean(payload.verified));
     addMessage("agent", payload.response || "Verification completed.");
 }
@@ -157,10 +198,10 @@ async function sendTextQuery(query, source = "text") {
 
     addMessage("user", payload.transcript);
     if (source === "voice") {
-        addMessage("agent", payload.response, { latencyMs });
+        addMessage("agent", payload.response, { latencyMs, dataSource: payload.data_source });
         speakResponse(payload.response);
     } else {
-        addMessage("agent", payload.response, { latencyMs });
+        addMessage("agent", payload.response, { latencyMs, dataSource: payload.data_source });
     }
     updateVerificationBadge(payload.verified, payload.customer_name);
 }
